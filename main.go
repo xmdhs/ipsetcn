@@ -17,7 +17,7 @@ var (
 
 func init() {
 	flag.StringVar(&i, "i", "geoip.db", "")
-	flag.StringVar(&o, "o", "initipset.sh", "")
+	flag.StringVar(&o, "o", "cnipset.conf", "")
 	flag.Parse()
 }
 
@@ -43,14 +43,14 @@ func main() {
 	bw := bufio.NewWriter(f)
 	defer bw.Flush()
 
-	bw.WriteString("ipset create cn hash:net maxelem\n")
-	bw.WriteString("ipset create cn6 hash:net family inet6\n")
+	bw.WriteString("create cn hash:net maxelem\n")
+	bw.WriteString("create cn6 hash:net family inet6\n")
 
 	for k := range ip4 {
-		bw.WriteString("ipset add cn " + k.String() + "\n")
+		bw.WriteString("add cn " + k.String() + "\n")
 	}
 	for k := range ip6 {
-		bw.WriteString("ipset add cn6 " + k.String() + "\n")
+		bw.WriteString("add cn6 " + k.String() + "\n")
 	}
 }
 
