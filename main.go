@@ -43,7 +43,7 @@ func main() {
 	bw := bufio.NewWriter(f)
 	defer bw.Flush()
 
-	bw.WriteString("create cn hash:net maxelem\n")
+	bw.WriteString("create cn hash:net\n")
 	bw.WriteString("create cn6 hash:net family inet6\n")
 
 	for k := range ip4 {
