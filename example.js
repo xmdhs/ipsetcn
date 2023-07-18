@@ -1,18 +1,18 @@
-function need(a,is4){
-    if (!a?.country?.iso_code == "CN"){
+function need(a, ipPre, is4) {
+    if (!a?.country?.iso_code == "CN") {
         return {
-            "tag":"",
+            "tag": "",
             "need": false
         }
     }
-    if (is4){
-        return{
-            "tag":"cn",
+    if (is4) {
+        return {
+            "tag": "cn",
             "need": true
         }
     }
-    return{
-        "tag":"cn6",
+    return {
+        "tag": "cn6",
         "need": true
     }
 }

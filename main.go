@@ -84,7 +84,7 @@ func main() {
 	}
 }
 
-func getLocIp(need func(any, bool) (string, bool), network maxminddb.Networks) (m map[string]*[]*net.IPNet, err error) {
+func getLocIp(need func(any, string, bool) (string, bool), network maxminddb.Networks) (m map[string]*[]*net.IPNet, err error) {
 	m = map[string]*[]*net.IPNet{}
 	for network.Next() {
 		var r any
@@ -97,7 +97,7 @@ func getLocIp(need func(any, bool) (string, bool), network maxminddb.Networks) (
 			return nil, fmt.Errorf("getLocIp: %w", err)
 		}
 
-		tag, need := need(r, pre.Addr().Is4())
+		tag, need := need(r, ip.String(), pre.Addr().Is4())
 		if !need {
 			continue
 		}
@@ -119,7 +119,7 @@ func getLocIp(need func(any, bool) (string, bool), network maxminddb.Networks) (
 	return m, nil
 }
 
-func defaultFunc(a any, ip4 bool) (tag string, b bool) {
+func defaultFunc(a any, ipnet string, ip4 bool) (tag string, b bool) {
 	c, ok := a.(map[string]any)
 	if !ok {
 		return "", false
