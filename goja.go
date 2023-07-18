@@ -6,7 +6,7 @@ import (
 	"github.com/dop251/goja"
 )
 
-func NewJsFunc(s string) (f func(any, string, bool) (string, bool), err error) {
+func NewJsFunc(s string) (f func(any, string, uint, bool) (string, bool), err error) {
 	vm := goja.New()
 	_, err = vm.RunString(s)
 	if err != nil {
@@ -18,8 +18,8 @@ func NewJsFunc(s string) (f func(any, string, bool) (string, bool), err error) {
 		panic("Not a function")
 	}
 
-	return func(a any, s string, b bool) (string, bool) {
-		res, err := need(goja.Undefined(), vm.ToValue(a), vm.ToValue(s), vm.ToValue(b))
+	return func(a any, s string, u uint, b bool) (string, bool) {
+		res, err := need(goja.Undefined(), vm.ToValue(a), vm.ToValue(s), vm.ToValue(u), vm.ToValue(b))
 		if err != nil {
 			panic(err)
 		}
