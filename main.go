@@ -40,6 +40,19 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+	} else {
+		b, err := os.ReadFile(s)
+		if err != nil {
+			panic(err)
+		}
+		f, err := NewJsFunc(string(b))
+		if err != nil {
+			panic(err)
+		}
+		ipm, err = getLocIp(f, *network)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	f, err := os.Create(o)
