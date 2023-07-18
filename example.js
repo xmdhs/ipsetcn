@@ -1,4 +1,4 @@
-function need(a, ipPre, asn, is4) {
+function need(a, ip, asn, is4) {
     let n = false
     if (a?.country?.iso_code == "CN") {
         n = true
