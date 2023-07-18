@@ -15,11 +15,13 @@ import (
 var (
 	i string
 	o string
+	s string
 )
 
 func init() {
 	flag.StringVar(&i, "i", "geoip.db", "")
 	flag.StringVar(&o, "o", "cnipset.conf", "")
+	flag.StringVar(&s, "s", "", "")
 	flag.Parse()
 }
 
@@ -30,10 +32,14 @@ func main() {
 	}
 
 	network := r.Networks(maxminddb.SkipAliasedNetworks)
+	var ipm map[string]*[]*net.IPNet
 
-	ip4, ip6, err := getLocIp("CN", *network)
-	if err != nil {
-		panic(err)
+	if s == "" {
+		var err error
+		ipm, err = getLocIp(defaultFunc, *network)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	f, err := os.Create(o)
@@ -45,74 +51,91 @@ func main() {
 	bw := bufio.NewWriter(f)
 	defer bw.Flush()
 
-	bw.WriteString("create cn hash:net\n")
-	bw.WriteString("create cn6 hash:net family inet6\n")
-
-	for _, v := range ip4 {
-		bw.WriteString("add cn " + v.String() + "\n")
-	}
-	for _, v := range ip6 {
-		bw.WriteString("add cn6 " + v.String() + "\n")
+	for k, v := range ipm {
+		if len(*v) == 0 {
+			continue
+		}
+		aip := (*v)[0]
+		p, err := netip.ParsePrefix(aip.String())
+		if err != nil {
+			panic(err)
+		}
+		if p.Addr().Is4() {
+			bw.WriteString(fmt.Sprintf("create %v hash:net\n", k))
+		} else {
+			bw.WriteString(fmt.Sprintf("create %v hash:net family inet6\n", k))
+		}
+		for _, v := range *v {
+			bw.WriteString(fmt.Sprintf("add %v %v\n", k, v))
+		}
 	}
 }
 
-type record struct {
-	Country struct {
-		ISOCode string `maxminddb:"iso_code"`
-	} `maxminddb:"country"`
-}
-
-func getLocIp(isoCode string, network maxminddb.Networks) (ip4 []*net.IPNet, ip6 []*net.IPNet, err error) {
-	ip4 = make([]*net.IPNet, 0)
-	ip6 = make([]*net.IPNet, 0)
+func getLocIp(need func(any, bool) (string, bool), network maxminddb.Networks) (m map[string]*[]*net.IPNet, err error) {
+	m = map[string]*[]*net.IPNet{}
 	for network.Next() {
-		var r record
+		var r any
 		ip, err := network.Network(&r)
 		if err != nil {
-			return nil, nil, fmt.Errorf("getLocIp: %w", err)
-		}
-		if r.Country.ISOCode != isoCode {
-			continue
+			return nil, fmt.Errorf("getLocIp: %w", err)
 		}
 		pre, err := netip.ParsePrefix(ip.String())
 		if err != nil {
-			return nil, nil, fmt.Errorf("getLocIp: %w", err)
+			return nil, fmt.Errorf("getLocIp: %w", err)
+		}
+
+		tag, need := need(r, pre.Addr().Is4())
+		if !need {
+			continue
 		}
 		_, n, err := net.ParseCIDR(pre.String())
 		if err != nil {
 			panic(err)
 		}
-		if pre.Addr().Is4() {
-			ip4 = append(ip4, n)
-			continue
+		l, ok := m[tag]
+		if !ok {
+			l = &[]*net.IPNet{}
+			m[tag] = l
 		}
-		if pre.Addr().Is6() {
-			ip6 = append(ip6, n)
-			continue
-		}
+		*l = append(*l, n)
 	}
-	ip4m := []merger.IRange{}
-	ip6m := []merger.IRange{}
-
-	for _, v := range ip4 {
-		ip4m = append(ip4m, merger.IpNetWrapper{IPNet: v})
+	for k, v := range m {
+		new := sortNet(*v)
+		m[k] = &new
 	}
-	for _, v := range ip6 {
-		ip6m = append(ip6m, merger.IpNetWrapper{IPNet: v})
+	return m, nil
+}
+
+func defaultFunc(a any, ip4 bool) (tag string, b bool) {
+	c, ok := a.(map[string]any)
+	if !ok {
+		return "", false
 	}
-
-	ip4m = merger.SortAndMerge(ip4m)
-	ip6m = merger.SortAndMerge(ip6m)
-
-	ip4 = make([]*net.IPNet, 0)
-	ip6 = make([]*net.IPNet, 0)
-
-	for _, v := range ip4m {
-		ip4 = append(ip4, v.ToIpNets()...)
+	country, ok := c["country"].(map[string]any)
+	if !ok {
+		return "", false
 	}
-	for _, v := range ip6m {
-		ip6 = append(ip6, v.ToIpNets()...)
+	isocode, ok := country["iso_code"].(string)
+	if !ok {
+		return "", false
 	}
+	tag = "cn"
+	if !ip4 {
+		tag = "cn6"
+	}
+	return tag, isocode == "CN"
+}
 
-	return ip4, ip6, nil
+func sortNet(ipnet []*net.IPNet) []*net.IPNet {
+	ipm := []merger.IRange{}
+	for _, v := range ipnet {
+		ipm = append(ipm, merger.IpNetWrapper{IPNet: v})
+	}
+	ipm = merger.SortAndMerge(ipm)
+
+	newNet := make([]*net.IPNet, 0, len(ipnet))
+	for _, v := range ipm {
+		newNet = append(newNet, v.ToIpNets()...)
+	}
+	return newNet
 }
