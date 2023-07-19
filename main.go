@@ -107,12 +107,40 @@ type ASN struct {
 func getLocIp(ctx context.Context, needF func() func(any, string, uint, bool) (string, bool), network maxminddb.Networks, asnr *maxminddb.Reader) (m map[string]*[]*net.IPNet, err error) {
 	m = map[string]*[]*net.IPNet{}
 	ml := sync.Mutex{}
-	g, _ := errgroup.WithContext(ctx)
+	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(runtime.GOMAXPROCS(0))
 
-	needPool := sync.Pool{}
-	needPool.New = func() any {
-		return needF()
+	type ret struct {
+		tag  string
+		need bool
+	}
+
+	type param struct {
+		a   any
+		ip  string
+		asn uint
+		is4 bool
+		ch  chan ret
+	}
+
+	ncn := make(chan param, runtime.GOMAXPROCS(0))
+
+	for i := 0; i < runtime.GOMAXPROCS(0); i++ {
+		go func() {
+			n := needF()
+			for {
+				select {
+				case v := <-ncn:
+					tag, need := n(v.a, v.ip, v.asn, v.is4)
+					v.ch <- ret{
+						tag:  tag,
+						need: need,
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
 	}
 
 	for network.Next() {
@@ -132,12 +160,20 @@ func getLocIp(ctx context.Context, needF func() func(any, string, uint, bool) (s
 			if err != nil {
 				return err
 			}
-			need := needPool.Get().(func(any, string, uint, bool) (string, bool))
-			tag, is := need(r, ip.String(), asn.AutonomousSystemNumber, pre.Addr().Is4())
-			if !is {
+			rch := make(chan ret)
+
+			ncn <- param{
+				a:   r,
+				ip:  ip.String(),
+				asn: asn.AutonomousSystemNumber,
+				is4: pre.Addr().Is4(),
+				ch:  rch,
+			}
+			ret := <-rch
+			tag := ret.tag
+			if !ret.need {
 				return nil
 			}
-			needPool.Put(need)
 			_, n, err := net.ParseCIDR(pre.String())
 			if err != nil {
 				return err
