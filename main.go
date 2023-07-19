@@ -2,14 +2,18 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"net"
 	"net/netip"
 	"os"
+	"runtime"
+	"sync"
 
 	"github.com/oschwald/maxminddb-golang"
 	"github.com/xmdhs/ipsetcn/merger"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -40,9 +44,13 @@ func main() {
 	network := r.Networks(maxminddb.SkipAliasedNetworks)
 	var ipm map[string]*[]*net.IPNet
 
+	ctx := context.Background()
+
 	if s == "" {
 		var err error
-		ipm, err = getLocIp(defaultFunc, *network, asnr)
+		ipm, err = getLocIp(ctx, func() func(any, string, uint, bool) (string, bool) {
+			return defaultFunc
+		}, *network, asnr)
 		if err != nil {
 			panic(err)
 		}
@@ -51,11 +59,13 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		f, err := NewJsFunc(string(b))
-		if err != nil {
-			panic(err)
-		}
-		ipm, err = getLocIp(f, *network, asnr)
+		ipm, err = getLocIp(ctx, func() func(any, string, uint, bool) (string, bool) {
+			f, err := NewJsFunc(string(b))
+			if err != nil {
+				panic(err)
+			}
+			return f
+		}, *network, asnr)
 		if err != nil {
 			panic(err)
 		}
@@ -94,38 +104,58 @@ type ASN struct {
 	AutonomousSystemNumber uint `maxminddb:"autonomous_system_number"`
 }
 
-func getLocIp(need func(any, string, uint, bool) (string, bool), network maxminddb.Networks, asnr *maxminddb.Reader) (m map[string]*[]*net.IPNet, err error) {
+func getLocIp(ctx context.Context, needF func() func(any, string, uint, bool) (string, bool), network maxminddb.Networks, asnr *maxminddb.Reader) (m map[string]*[]*net.IPNet, err error) {
 	m = map[string]*[]*net.IPNet{}
+	ml := sync.Mutex{}
+	g, _ := errgroup.WithContext(ctx)
+	g.SetLimit(runtime.GOMAXPROCS(0))
+
+	needPool := sync.Pool{}
+	needPool.New = func() any {
+		return needF()
+	}
+
 	for network.Next() {
 		var r any
 		ip, err := network.Network(&r)
 		if err != nil {
 			return nil, fmt.Errorf("getLocIp: %w", err)
 		}
-		pre, err := netip.ParsePrefix(ip.String())
-		if err != nil {
-			return nil, fmt.Errorf("getLocIp: %w", err)
-		}
-		var asn ASN
-		nip := net.ParseIP(pre.Addr().String())
-		err = asnr.Lookup(nip, &asn)
-		if err != nil {
-			return nil, fmt.Errorf("getLocIp: %w", err)
-		}
-		tag, need := need(r, ip.String(), asn.AutonomousSystemNumber, pre.Addr().Is4())
-		if !need {
-			continue
-		}
-		_, n, err := net.ParseCIDR(pre.String())
-		if err != nil {
-			panic(err)
-		}
-		l, ok := m[tag]
-		if !ok {
-			l = &[]*net.IPNet{}
-			m[tag] = l
-		}
-		*l = append(*l, n)
+		g.Go(func() error {
+			pre, err := netip.ParsePrefix(ip.String())
+			if err != nil {
+				return err
+			}
+			var asn ASN
+			nip := net.ParseIP(pre.Addr().String())
+			err = asnr.Lookup(nip, &asn)
+			if err != nil {
+				return err
+			}
+			need := needPool.Get().(func(any, string, uint, bool) (string, bool))
+			tag, is := need(r, ip.String(), asn.AutonomousSystemNumber, pre.Addr().Is4())
+			if !is {
+				return nil
+			}
+			needPool.Put(need)
+			_, n, err := net.ParseCIDR(pre.String())
+			if err != nil {
+				return err
+			}
+			ml.Lock()
+			defer ml.Unlock()
+			l, ok := m[tag]
+			if !ok {
+				l = &[]*net.IPNet{}
+				m[tag] = l
+			}
+			*l = append(*l, n)
+			return nil
+		})
+	}
+	err = g.Wait()
+	if err != nil {
+		return nil, fmt.Errorf("getLocIp: %w", err)
 	}
 	for k, v := range m {
 		new := sortNet(*v)
