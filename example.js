@@ -1,11 +1,15 @@
 function need(a, ip, asn, is4) {
-    let n = false
-    if (a?.country?.iso_code == "CN") {
-        n = true
-    }
-    if (a?.country?.iso_code == "JP" && asn == 45102) {
-        n = true
-    }
+    const n = (() => {
+        if (asn == 140633) {
+            return false
+        }
+        if (a?.country?.iso_code == "CN") {
+            return true
+        }
+        if (a?.country?.iso_code == "JP" && asn == 45102) {
+            return true
+        }
+    })()
 
     if (!n) {
         return {
